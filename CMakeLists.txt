@@ -17,6 +17,7 @@ set(CMAKE_AUTORCC TRUE)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 #-----------------------------------------------------------------------------
 #                                OPTIONS
@@ -79,6 +80,7 @@ endif()
 #-----------------------------------------------------------------------------
 include(KDEClangFormat)
 file(GLOB_RECURSE ALL_CLANG_FORMAT_SOURCE_FILES *.cpp *.h)
+list(FILTER ALL_CLANG_FORMAT_SOURCE_FILES EXCLUDE REGEX ".*\\.ccls-cache/.*")
 kde_clang_format(${ALL_CLANG_FORMAT_SOURCE_FILES})
 
 install(FILES org.kde.plasma.firewall.metainfo.xml DESTINATION ${KDE_INSTALL_METAINFODIR})
