@@ -6,7 +6,6 @@
 #ifndef UFW_RULE_H
 #define UFW_RULE_H
 
-#include <QDebug>
 #include <QObject>
 #include <QString>
 #include <kcm_firewall_core_export.h>

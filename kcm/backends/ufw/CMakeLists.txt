@@ -15,6 +15,7 @@ kcoreaddons_add_plugin(
 
 target_link_libraries(ufwbackend
     kcm_firewall_core
+    Sonic::Logging
 )
 
 add_subdirectory(helper)

@@ -15,6 +15,8 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 
+#include <Sonic/Logging/Log>
+
 #include "firewallclient.h"
 
 // Keep in sync with kcm_ufw_helper.py
@@ -152,7 +154,7 @@ QString Rule::protocolSuffix(int prot, const QString &sep)
 
     if (prot == -1) {
         prot = 0;
-        qWarning() << "Invalid protocol -1, defaulting to" << FirewallClient::knownProtocols().at(prot);
+        sonicWarning() << "Invalid protocol -1, defaulting to" << FirewallClient::knownProtocols().at(prot);
     }
 
     return sep + FirewallClient::knownProtocols().at(prot);
@@ -184,7 +186,6 @@ Rule::Rule()
 
 QString Rule::fromStr() const
 {
-    /* qDebug() << "Before Crashing" << m_protocol; */
     return modify(m_sourceAddress, m_sourcePort, m_sourceApplication, m_interfaceIn, m_protocol);
 }
 

@@ -7,11 +7,7 @@
 #include <QAbstractTableModel>
 #include <QTimer>
 
-#include <QLoggingCategory>
-
 #include "netstathelper.h"
-
-Q_DECLARE_LOGGING_CATEGORY(ConnectionsModelDebug)
 
 struct ConnectionsData {
     QString protocol;

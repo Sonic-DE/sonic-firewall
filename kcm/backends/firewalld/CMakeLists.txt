@@ -21,4 +21,5 @@ kcoreaddons_add_plugin(
 target_link_libraries(firewalldbackend
     kcm_firewall_core
     Qt::DBus
+    Sonic::Logging
 )

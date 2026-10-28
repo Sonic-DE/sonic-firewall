@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: CC0-1.0
+# SPDX-FileCopyrightText: 2026 Joseph Crowell <joseph.w.crowell@gmail.com>
+[Domain]
+Name=Firewall service
+Icon=preferences-security-firewall
+
+[org.sonicde.firewall.servicehelper.manage]
+Name=Manage firewall service
+Description=Start, stop, enable or disable the firewall service
+Policy=auth_admin
+Persistence=session

@@ -103,6 +103,8 @@ Q_SIGNALS:
 
     // TODO is this needed?
     void showErrorMessage(const QString &message);
+    // A warning that doesn't stop the operation, such as a failed boot-service step.
+    void showNotice(const QString &message);
 
 private:
     QList<Entry> m_profiles;

@@ -32,4 +32,5 @@ target_link_libraries(networkstatus
     KF6::ConfigCore
     KF6::AuthCore
     KF6::I18n
+    Sonic::Logging
 )

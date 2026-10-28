@@ -6,12 +6,11 @@
 
 #include <KLocalizedString>
 
-#include <QDebug>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QTimer>
 
-Q_LOGGING_CATEGORY(NetstatHelperDebug, "netstat.helper")
+#include <Sonic/Logging/Log>
 
 void NetstatHelper::query()
 {
@@ -37,12 +36,12 @@ void NetstatHelper::query()
     connect(m_executableProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, &NetstatHelper::stepExecuteFinished);
     m_executableProcess->start(executable, netstatArgs, QIODevice::ReadOnly);
 
-    qDebug() << "Running process";
+    sonicDebug() << "Running process";
 }
 
 void NetstatHelper::stopProcess()
 {
-    qDebug() << "Timing out!";
+    sonicDebug() << "Timing out!";
     m_hasTimeoutError = true;
 
     m_executableProcess->disconnect();
@@ -124,7 +123,7 @@ QList<QStringList> NetstatHelper::parseSSOutput(const QByteArray &netstatOutput)
 
             QStringList substrings = values[6].split(',');
             if (substrings.count() < 2) {
-                qWarning() << "Failed to parse line" << values[6];
+                sonicWarning() << "Failed to parse line" << values[6];
                 continue;
             }
             appName = substrings[0].remove(QStringLiteral("\""));

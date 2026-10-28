@@ -8,14 +8,13 @@
 #include <QDBusMessage>
 #include <QDBusPendingCall>
 #include <QDBusPendingReply>
-#include <QDebug>
 #include <QRegularExpression>
 
 #include <KLocalizedString>
 
-#include "firewalldjob.h"
+#include <Sonic/Logging/Log>
 
-Q_LOGGING_CATEGORY(FirewallDJobDebug, "firewalld.job")
+#include "firewalldjob.h"
 
 namespace FIREWALLD
 {
@@ -74,7 +73,7 @@ T FirewalldJob::connectCall(QDBusPendingCallWatcher *watcher)
     if (reply.isError()) {
         setErrorText(reply.error().message());
         setError(DBUSFIREWALLDDERROR);
-        qCDebug(FirewallDJobDebug) << "job error message: " << errorString();
+        sonicDebug() << "job error message: " << errorString();
         emitResult();
     }
     return reply.value();
@@ -86,7 +85,7 @@ void FirewalldJob::connectCall(QDBusPendingCallWatcher *watcher)
     if (reply.isError()) {
         setErrorText(reply.error().message());
         setError(DBUSFIREWALLDDERROR);
-        qCDebug(FirewallDJobDebug) << "job error message: " << errorString();
+        sonicDebug() << "job error message: " << errorString();
         emitResult();
     }
 }
@@ -126,7 +125,7 @@ void FirewalldJob::firewalldAction(const QString &bus, const QString &path, cons
                 if (method.contains(QRegularExpression("^(add|remove)"))) {
                     QString reply = connectCall<QString>(watcher);
                     if (!reply.isEmpty())
-                        qCDebug(FirewallDJobDebug) << "manipulated zone: " << reply;
+                        sonicDebug() << "manipulated zone: " << reply;
 
                 } else if (method == "getZoneSettings2") {
                     QMap<QString, QVariant> settings;
@@ -159,18 +158,18 @@ void FirewalldJob::start()
     switch (m_type) {
     case FirewalldJob::SIMPLIFIEDRULE:
     case FirewalldJob::SIMPLELIST: {
-        qCDebug(FirewallDJobDebug) << "firewalld zone interface: " << m_call << m_args;
+        sonicDebug() << "firewalld zone interface: " << m_call << m_args;
         firewalldAction(FIREWALLD::BUS, FIREWALLD::PATH, SIMPLE::INTERFACE, m_call, m_args);
         break;
     }
     case FirewalldJob::FIREWALLD: {
-        qCDebug(FirewallDJobDebug) << "firewalld direct: " << m_call << m_args;
+        sonicDebug() << "firewalld direct: " << m_call << m_args;
         /* firewalldAction(m_call, m_args); */
         firewalldAction(FIREWALLD::BUS, FIREWALLD::PATH, DIRECT::INTERFACE, m_call, m_args);
         break;
     }
     case FirewalldJob::SAVEFIREWALLD: {
-        qCDebug(FirewallDJobDebug) << i18n("firewalld saving (runtime to permanent)");
+        sonicDebug() << i18n("firewalld saving (runtime to permanent)");
         firewalldAction(FIREWALLD::BUS, FIREWALLD::PATH, SERVICES::INTERFACE, SAVE::METHOD);
         /* saveFirewalld(); */
         break;

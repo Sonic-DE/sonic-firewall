@@ -5,11 +5,8 @@
 #ifndef NETSTATHELPER_H
 #define NETSTATHELPER_H
 
-#include <QLoggingCategory>
 #include <QProcess>
 #include <QVariantMap>
-
-Q_DECLARE_LOGGING_CATEGORY(NetstatHelperDebug)
 
 
 class NetstatHelper : public QObject

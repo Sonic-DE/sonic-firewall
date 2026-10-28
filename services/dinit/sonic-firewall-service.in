@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-FileCopyrightText: 2026 Joseph Crowell <joseph.w.crowell@gmail.com>
+# Without a logfile, the daemon writes /var/log/sonic/sonic-firewall-service.log itself.
+
+type = process
+command = @KDE_INSTALL_FULL_LIBEXECDIR@/sonic-firewall-service
+depends-on = dbus
+smooth-recovery = true

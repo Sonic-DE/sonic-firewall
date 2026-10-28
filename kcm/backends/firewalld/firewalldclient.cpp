@@ -5,18 +5,24 @@
 #include <KLocalizedString>
 #include <KPluginFactory>
 
+#include <QDBusConnection>
+#include <QDBusConnectionInterface>
 #include <QDBusMetaType>
-#include <QDebug>
+#include <QDBusReply>
+#include <QDBusServiceWatcher>
 #include <QDir>
 #include <QNetworkInterface>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
 
 #include <loglistmodel.h>
 #include <rulelistmodel.h>
-#include <systemdjob.h>
+#include <servicejob.h>
+
+#include <Sonic/Logging/Logging>
 
 #include "firewalldclient.h"
 #include "firewalldjob.h"
@@ -25,8 +31,10 @@
 
 #include "dbustypes.h"
 
+SONIC_LOGGING_COMPONENT("org.sonicde.firewall.firewalld")
+SONIC_LOGGING_AUTO_INSTALL()
+
 K_PLUGIN_CLASS_WITH_JSON(FirewalldClient, "firewalldbackend.json")
-Q_LOGGING_CATEGORY(FirewallDClientDebug, "firewalld.client")
 
 FirewalldClient::FirewalldClient(QObject *parent, const QVariantList &args)
     : IFirewallClientBackend(parent, args)
@@ -60,24 +68,57 @@ KJob *FirewalldClient::setEnabled(const bool value)
         return nullptr;
     }
 
-    SystemdJob *job = new SystemdJob(static_cast<SYSTEMD::actions>(value), QStringLiteral("firewalld.service"));
+    auto *job = new ServiceJob(value, QStringLiteral("firewalld"));
 
     connect(job, &KJob::result, this, [this, job, value] {
         if (job->error()) {
-            qCDebug(FirewallDClientDebug) << "Job Error: " << job->error() << job->errorString();
+            sonicDebug() << "Job Error: " << job->error() << job->errorString();
             return;
         }
         m_currentProfile.setEnabled(value);
         if (value) {
-            FirewalldJob *authjob = new FirewalldJob(FirewalldJob::ALL);
-            connect(authjob, &KJob::result, this, [this, authjob] {
-                if (authjob->error()) {
-                    qCDebug(FirewallDClientDebug) << "Job AuthError: " << authjob->error() << authjob->errorString();
-                    return;
-                }
-                queryStatus(FirewallClient::DefaultDataBehavior::ReadDefaults, FirewallClient::ProfilesBehavior::DontListenProfiles);
-            });
-            authjob->start();
+            const auto queryWhenReady = [this] {
+                FirewalldJob *authjob = new FirewalldJob(FirewalldJob::ALL);
+                connect(authjob, &KJob::result, this, [this, authjob] {
+                    if (authjob->error()) {
+                        sonicDebug() << "Job AuthError: " << authjob->error() << authjob->errorString();
+                        return;
+                    }
+                    queryStatus(FirewallClient::DefaultDataBehavior::ReadDefaults, FirewallClient::ProfilesBehavior::DontListenProfiles);
+                });
+                authjob->start();
+            };
+
+            // Only systemd's Type=dbus unit waits for the bus name; other service managers can return earlier.
+            if (isCurrentlyLoaded()) {
+                queryWhenReady();
+            } else {
+                auto *watcher = new QDBusServiceWatcher(QStringLiteral("org.fedoraproject.FirewallD1"),
+                                                        QDBusConnection::systemBus(),
+                                                        QDBusServiceWatcher::WatchForRegistration,
+                                                        this);
+                auto *timer = new QTimer(this);
+                timer->setSingleShot(true);
+                timer->setInterval(15000);
+                // Whichever fires second (a registration racing the timeout) finds nothing connected.
+                const auto cleanup = [this, watcher, timer] {
+                    watcher->disconnect(this);
+                    timer->disconnect(this);
+                    timer->stop();
+                    watcher->deleteLater();
+                    timer->deleteLater();
+                };
+                connect(watcher, &QDBusServiceWatcher::serviceRegistered, this, [cleanup, queryWhenReady] {
+                    cleanup();
+                    queryWhenReady();
+                });
+                connect(timer, &QTimer::timeout, this, [cleanup, queryWhenReady] {
+                    cleanup();
+                    sonicWarning() << "firewalld didn't appear on the system bus within 15 s";
+                    queryWhenReady();
+                });
+                timer->start();
+            }
         }
         Q_EMIT enabledChanged(value);
     });
@@ -93,10 +134,10 @@ KJob *FirewalldClient::queryStatus(FirewallClient::DefaultDataBehavior defaultsB
 
     connect(job, &QueryRulesFirewalldJob::result, this, [this, job] {
         if (job->error()) {
-            qCDebug(FirewallDClientDebug) << "Query rules job error: " << job->error() << job->errorString();
+            sonicDebug() << "Query rules job error: " << job->error() << job->errorString();
             return;
         }
-        qCDebug(FirewallDClientDebug) << job->name();
+        sonicDebug() << job->name();
         QList<Rule *> const rules = extractRulesFromResponse(job->getFirewalldreply()) + extractRulesFromResponse(job->getServices());
         const QVariantMap args = {{"defaultIncomingPolicy", defaultIncomingPolicy()},
                                   {"defaultOutgoingPolicy", defaultOutgoingPolicy()},
@@ -148,23 +189,23 @@ Rule *FirewalldClient::ruleAt(int index)
 KJob *FirewalldClient::addRule(Rule *rule)
 {
     if (rule == nullptr) {
-        qWarning() << "Invalid rule";
+        sonicWarning() << "Invalid rule";
         return nullptr;
     }
 
-    qCDebug(FirewallDClientDebug) << rule->toStr();
+    sonicDebug() << rule->toStr();
 
     QVariantList dbusArgs = buildRule(rule);
     if (rule->simplified()) {
         dbusArgs.push_back(QVariant(0));
     }
-    qCDebug(FirewallDClientDebug) << "sending job ... rule simplified ? " << rule->simplified();
-    qCDebug(FirewallDClientDebug) << "Dbus Args...." << dbusArgs;
+    sonicDebug() << "sending job ... rule simplified ? " << rule->simplified();
+    sonicDebug() << "Dbus Args...." << dbusArgs;
     FirewalldJob *job = rule->simplified() ? new FirewalldJob("addService", dbusArgs, FirewalldJob::SIMPLIFIEDRULE) : new FirewalldJob("addRule", dbusArgs);
 
     connect(job, &KJob::result, this, [this, job] {
         if (job->error()) {
-            qCDebug(FirewallDClientDebug) << job->errorString() << job->error();
+            sonicDebug() << job->errorString() << job->error();
             return;
         }
         queryStatus(FirewallClient::DefaultDataBehavior::ReadDefaults, FirewallClient::ProfilesBehavior::DontListenProfiles);
@@ -182,7 +223,7 @@ KJob *FirewalldClient::removeRule(int index)
         new FirewalldJob("removeRule", dbusArgs);
     connect(job, &KJob::result, this, [this, job] {
         if (job->error()) {
-            qCDebug(FirewallDClientDebug) << job->errorString() << job->error();
+            sonicDebug() << job->errorString() << job->error();
             return;
         }
         refresh();
@@ -209,11 +250,11 @@ KJob *FirewalldClient::moveRule(int from, int to)
 {
     QList<Rule *> cRules = m_currentProfile.rules();
     if (from < 0 || from >= cRules.count()) {
-        qWarning() << "invalid from index";
+        sonicWarning() << "invalid from index";
     }
 
     if (to < 0 || to >= cRules.count()) {
-        qWarning() << "invalid to index";
+        sonicWarning() << "invalid to index";
     }
     // Correct indices
     from += 1;
@@ -310,9 +351,9 @@ bool FirewalldClient::isTcpAndUdp(int protocolIdx)
 
 QVariantList FirewalldClient::buildRule(const Rule *r) const
 {
-    qCDebug(FirewallDClientDebug) << "rule simplified? -> " << r->simplified();
+    sonicDebug() << "rule simplified? -> " << r->simplified();
     if (r->simplified()) {
-        qCDebug(FirewallDClientDebug) << "rule simplified content: " << r->toStr();
+        sonicDebug() << "rule simplified content: " << r->toStr();
         if (!r->sourceApplication().isEmpty()) {
             return QVariantList({"", r->sourceApplication()});
         }
@@ -375,7 +416,7 @@ QVariantList FirewalldClient::buildRule(const Rule *r) const
     }
 
     QString ipvf = r->ipv6() == true ? "ipv6" : "ipv4";
-    qCDebug(FirewallDClientDebug) << firewalld_direct_rule;
+    sonicDebug() << firewalld_direct_rule;
     return QVariantList({ipvf, args.value("table"), args.value("chain"), args.value("priority"), firewalld_direct_rule});
 }
 
@@ -396,7 +437,7 @@ KJob *FirewalldClient::setDefaultIncomingPolicy(QString defaultIncomingPolicy)
     FirewalldJob *job = new FirewalldJob();
     connect(job, &KJob::result, this, [this, job, defaultIncomingPolicy] {
         if (job->error()) {
-            qCDebug(FirewallDClientDebug) << job->errorString() << job->error();
+            sonicDebug() << job->errorString() << job->error();
             return;
         }
         m_currentProfile.setDefaultIncomingPolicy(defaultIncomingPolicy);
@@ -411,7 +452,7 @@ KJob *FirewalldClient::setDefaultOutgoingPolicy(QString defaultOutgoingPolicy)
     FirewalldJob *job = new FirewalldJob();
     connect(job, &KJob::result, this, [this, job, defaultOutgoingPolicy] {
         if (job->error()) {
-            qCDebug(FirewallDClientDebug) << job->errorString() << job->error();
+            sonicDebug() << job->errorString() << job->error();
             return;
         }
         m_currentProfile.setDefaultOutgoingPolicy(defaultOutgoingPolicy);
@@ -427,7 +468,7 @@ KJob *FirewalldClient::save()
 
     connect(job, &KJob::result, this, [this, job] {
         if (job->error()) {
-            qCDebug(FirewallDClientDebug) << job->name() << job->errorString() << job->error();
+            sonicDebug() << job->name() << job->errorString() << job->error();
             return;
         }
         queryStatus(FirewallClient::DefaultDataBehavior::ReadDefaults, FirewallClient::ProfilesBehavior::DontListenProfiles);
@@ -506,7 +547,7 @@ QList<Rule *> FirewalldClient::extractRulesFromResponse(const QList<firewalld_re
         const auto interface_out = r.rules.indexOf("-i") >= 0 ? r.rules.at(r.rules.indexOf("-i") + 1) : "";
 
         if (r.rules.indexOf("-p") < 0) {
-            qWarning() << "Error forming rule";
+            sonicWarning() << "Error forming rule";
         }
 
         const QString protocolName = r.rules.at(r.rules.indexOf("-p") + 1);
@@ -543,7 +584,7 @@ void FirewalldClient::setProfile(Profile profile)
     auto oldProfile = m_currentProfile;
     m_currentProfile = profile;
     m_rulesModel->setProfile(m_currentProfile);
-    qCDebug(FirewallDClientDebug) << "Profile incoming policy: " << m_currentProfile.defaultIncomingPolicy()
+    sonicDebug() << "Profile incoming policy: " << m_currentProfile.defaultIncomingPolicy()
                                   << "Old profile policy: " << oldProfile.defaultIncomingPolicy();
     if (m_currentProfile.enabled() != oldProfile.enabled()) {
         getDefaultIncomingPolicyFromDbus();
@@ -575,17 +616,18 @@ QStringList FirewalldClient::knownProtocols()
 
 bool FirewalldClient::isCurrentlyLoaded() const
 {
-    QProcess process;
-    const QString pname = "systemctl";
-    const QStringList args = {"status", "firewalld"};
-
-    process.start(pname, args);
-    process.waitForFinished();
-
-    // systemctl returns 0 for status if the app is loaded, and 3 otherwise.
-    qCDebug(FirewallDClientDebug) << "Firewalld is loaded?" << process.exitCode();
-
-    return process.exitCode() == EXIT_SUCCESS;
+    const QDBusConnection bus = QDBusConnection::systemBus();
+    if (!bus.isConnected() || !bus.interface()) {
+        sonicWarning() << "System bus unavailable:" << bus.lastError().message();
+        return false;
+    }
+    const QDBusReply<bool> reply = bus.interface()->isServiceRegistered(QStringLiteral("org.fedoraproject.FirewallD1"));
+    if (!reply.isValid()) {
+        sonicWarning() << "Cannot query firewalld on the system bus:" << reply.error().message();
+        return false;
+    }
+    sonicDebug() << "Firewalld is loaded?" << reply.value();
+    return reply.value();
 }
 
 QString FirewalldClient::version() const
@@ -614,7 +656,7 @@ void FirewalldClient::queryKnownApplications()
 
     connect(job, &KJob::result, this, [this, job] {
         if (job->error()) {
-            qCDebug(FirewallDClientDebug) << job->name() << job->errorString() << job->error();
+            sonicDebug() << job->name() << job->errorString() << job->error();
             return;
         }
         m_knownApplications = job->getServices();
@@ -626,19 +668,19 @@ void FirewalldClient::getDefaultIncomingPolicyFromDbus()
     FirewalldJob *job = new FirewalldJob("getZoneSettings2", {""}, FirewalldJob::SIMPLELIST);
     connect(job, &KJob::result, this, [this, job] {
         if (job->error()) {
-            qCDebug(FirewallDClientDebug) << job->name() << job->errorString() << job->error();
+            sonicDebug() << job->name() << job->errorString() << job->error();
             return;
         }
         QString policy = job->getDefaultIncomingPolicy();
-        qCDebug(FirewallDClientDebug) << "Incoming Policy (firewalld definition): " << policy;
+        sonicDebug() << "Incoming Policy (firewalld definition): " << policy;
         if (policy == "default" || policy == "reject") {
-            qCDebug(FirewallDClientDebug) << "Setting incoming Policy: rejected";
+            sonicDebug() << "Setting incoming Policy: rejected";
             m_currentProfile.setDefaultIncomingPolicy("reject");
         } else if (policy == "allow") {
-            qCDebug(FirewallDClientDebug) << "Setting incoming Policy: allowed";
+            sonicDebug() << "Setting incoming Policy: allowed";
             m_currentProfile.setDefaultIncomingPolicy("allow");
         } else {
-            qCDebug(FirewallDClientDebug) << "Setting incoming Policy: denied";
+            sonicDebug() << "Setting incoming Policy: denied";
             m_currentProfile.setDefaultIncomingPolicy("deny");
         }
     });

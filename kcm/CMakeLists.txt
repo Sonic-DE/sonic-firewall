@@ -24,4 +24,5 @@ target_link_libraries(kcm_firewall PRIVATE
 
     kcm_firewall_core
     networkstatus
+    Sonic::Logging
 )

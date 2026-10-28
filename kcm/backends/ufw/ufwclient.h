@@ -78,7 +78,6 @@ protected:
     KAuth::Action buildModifyAction(const QVariantMap &arguments);
 
 private:
-    void enableService(bool value);
     QString toXml(Rule *r) const;
     QStringList m_rawLogs;
     Profile m_currentProfile;

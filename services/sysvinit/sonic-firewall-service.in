@@ -1,0 +1,36 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-FileCopyrightText: 2026 Joseph Crowell <joseph.w.crowell@gmail.com>
+### BEGIN INIT INFO
+# Provides:          sonic-firewall-service
+# Required-Start:    $remote_fs $syslog dbus
+# Required-Stop:     $remote_fs $syslog dbus
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: SonicDE firewall service
+### END INIT INFO
+
+# --background gives the daemon /dev/null as stdout, so it writes /var/log/sonic/sonic-firewall-service.log itself.
+DAEMON=@KDE_INSTALL_FULL_LIBEXECDIR@/sonic-firewall-service
+PIDFILE=/run/sonic-firewall-service.pid
+
+case "$1" in
+start)
+    start-stop-daemon --start --quiet --background --make-pidfile --pidfile "$PIDFILE" --exec "$DAEMON"
+    ;;
+stop)
+    start-stop-daemon --stop --quiet --retry TERM/10 --pidfile "$PIDFILE" --exec "$DAEMON"
+    rm -f "$PIDFILE"
+    ;;
+restart|force-reload)
+    "$0" stop
+    "$0" start
+    ;;
+status)
+    start-stop-daemon --status --pidfile "$PIDFILE" --exec "$DAEMON"
+    ;;
+*)
+    echo "Usage: $0 {start|stop|restart|force-reload|status}" >&2
+    exit 3
+    ;;
+esac

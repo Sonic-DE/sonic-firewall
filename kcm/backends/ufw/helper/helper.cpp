@@ -7,8 +7,9 @@
  */
 
 #include "helper.h"
+#include "initsystem.h"
+#include "ufwlogreader.h"
 #include <QByteArray>
-#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QProcess>
@@ -22,6 +23,21 @@
 #include <KLocalizedString>
 
 #include "ufw_helper_config.h"
+
+#include <Sonic/Logging/Logging>
+
+SONIC_LOGGING_COMPONENT("org.sonicde.firewall.ufwhelper")
+
+namespace
+{
+// KAUTH_HELPER_MAIN installs KAuth's syslog handler before it constructs QCoreApplication; this runs from
+// that constructor, so the explicit install replaces KAuth's handler with Sonic Logging.
+void installSonicLogging()
+{
+    Sonic::Logging::install();
+}
+}
+Q_COREAPP_STARTUP_FUNCTION(installSonicLogging)
 
 namespace
 {
@@ -74,32 +90,34 @@ ActionReply Helper::query(const QVariantMap &args)
     return reply;
 }
 
-QStringList getLogFromSystemd(const QString &lastLine)
+QStringList getLogLines(const QString &lastLine)
 {
-    QString program = QStringLiteral("journalctl");
-    QStringList arguments{"-xb", "-n", "100", "-g", "UFW"};
+    QStringList lines;
+    QString source;
+    if (UfwLogReader::journalAvailable()) {
+        QProcess journal;
+        journal.start(UfwLogReader::findTool(QStringLiteral("journalctl")), {"-xb", "-n", "100", "-g", "UFW"});
+        journal.waitForFinished();
 
-    QProcess myProcess;
-    myProcess.start(program, arguments);
-    myProcess.waitForFinished();
-
-    auto resultString = QString(myProcess.readAllStandardOutput());
-    const auto resultList = resultString.split(QStringLiteral("\n"));
-
-    // Example Line from Systemd:
-    // Dec 06 17:42:45 tomatoland kernel: [UFW BLOCK] IN=wlan0 OUT= MAC= SRC=192.168.50.181 DST=224.0.0.252 LEN=56 TOS=0x00
-    //     PREC=0x00 TTL=255 ID=52151 PROTO=UDP SPT=5355 DPT=5355 LEN=36
-    // We need to remove everything up to the space after ']'.
-
-    QStringList result;
-    for (const QString &line : resultList) {
-        if (!lastLine.isEmpty() && line == lastLine) {
-            result.clear();
-            continue;
-        }
-        result.append(line);
+        // Example Line from Systemd:
+        // Dec 06 17:42:45 tomatoland kernel: [UFW BLOCK] IN=wlan0 OUT= MAC= SRC=192.168.50.181 DST=224.0.0.252 LEN=56 TOS=0x00
+        //     PREC=0x00 TTL=255 ID=52151 PROTO=UDP SPT=5355 DPT=5355 LEN=36
+        const QStringList journalLines = QString::fromUtf8(journal.readAllStandardOutput()).split(u'\n');
+        lines = UfwLogReader::filterUfwLines(journalLines, 100);
+        source = QStringLiteral("journal");
     }
-    return result;
+    // journald can run with Storage=none and forward to a syslog daemon; its socket still exists.
+    if (lines.isEmpty()) {
+        lines = UfwLogReader::readSyslogTail(UfwLogReader::defaultSyslogPaths(), 1024 * 1024, 100);
+        source = QStringLiteral("syslog files");
+    }
+    // Minimal systems often run no syslog daemon.
+    if (lines.isEmpty()) {
+        lines = UfwLogReader::readDmesg(100);
+        source = QStringLiteral("dmesg");
+    }
+    sonicInfo() << "ufw log source:" << source << "lines:" << lines.size();
+    return UfwLogReader::newLines(lines, lastLine);
 }
 
 ActionReply Helper::queryapps(const QVariantMap &args)
@@ -111,7 +129,7 @@ ActionReply Helper::queryapps(const QVariantMap &args)
     const QString ufwexe = QStandardPaths::findExecutable("ufw", {"/usr/sbin", "/usr/bin", "/sbin", "/bin"});
 
     if (ufwexe.isEmpty()) {
-        qDebug() << "Executable not found: ufw";
+        sonicDebug() << "Executable not found: ufw";
         return reply;
     }
 
@@ -140,7 +158,7 @@ ActionReply Helper::viewlog(const QVariantMap &args)
     ActionReply reply;
     QString lastLine = args["lastLine"].toString();
 
-    QStringList result = getLogFromSystemd(lastLine);
+    QStringList result = getLogLines(lastLine);
     reply.addData(QStringLiteral("lines"), result);
     return reply;
 }
@@ -165,9 +183,18 @@ ActionReply Helper::modify(const QVariantMap &args)
 
 ActionReply Helper::setStatus(const QVariantMap &args, const QString &cmd)
 {
-    const QString enabled = args[QStringLiteral("status")].toBool() ? "true" : "false";
-
-    return run({"--setEnabled=" + enabled}, {"--status"}, cmd);
+    const bool enable = args[QStringLiteral("status")].toBool();
+    // --setEnabled runs first: OpenRC's /etc/init.d/ufw start fails unless ENABLED=yes.
+    ActionReply reply = run({"--setEnabled=" + QString(enable ? "true" : "false")}, {"--status"}, cmd);
+    if (reply.errorCode() == EXIT_SUCCESS) {
+        // The boot service step runs here, inside the action the user already authorised: one prompt.
+        QString message;
+        const int status = InitSystem::manage(QStringLiteral("ufw"), enable, /*serviceOnly*/ true, &message);
+        if (status != InitSystem::Ok) {
+            reply.addData(QStringLiteral("bootWarning"), message); // non-fatal; the KCM shows a notice
+        }
+    }
+    return reply;
 }
 
 ActionReply Helper::setDefaults(const QVariantMap &args, const QString &cmd)
@@ -294,7 +321,7 @@ ActionReply Helper::addRules(const QVariantMap &args, const QString &cmd)
     for (int i = 0; i < count; ++i) {
         cmdArgs << "--add=" + args["xml" + QString::number(i)].toString();
     }
-    qDebug() << "Cmd args passed to ufw:" << cmdArgs;
+    sonicDebug() << "Cmd args passed to ufw:" << cmdArgs;
 
     checkFolder();
     return run(cmdArgs, {"--list"}, cmd);
@@ -319,7 +346,7 @@ ActionReply Helper::editRule(const QVariantMap &args, const QString &cmd)
 {
     checkFolder();
 
-    qDebug() << args[QStringLiteral("xml")].toString();
+    sonicDebug() << args[QStringLiteral("xml")].toString();
 
     return run({"--update=" + args["xml"].toString()}, {"--list"}, cmd);
 }
@@ -365,7 +392,7 @@ ActionReply Helper::run(const QStringList &args, const QString &cmd)
 
     // reply.addData(QStringLiteral("response"), ufw.readAllStandardOutput());
     QString output = ufw.readAllStandardOutput();
-    qDebug() << "Command" << UFW_PLUGIN_HELPER_PATH << args << output;
+    sonicDebug() << "Command" << UFW_PLUGIN_HELPER_PATH << args << output;
 
     reply.addData("response", output);
     reply.addData(QStringLiteral("cmd"), cmd);

@@ -22,6 +22,11 @@
 #include "backends/netstat/connectionsmodel.h"
 #include "backends/netstat/netstatclient.h"
 
+#include <Sonic/Logging/Logging>
+
+SONIC_LOGGING_COMPONENT("org.sonicde.firewall.kcm")
+SONIC_LOGGING_AUTO_INSTALL()
+
 K_PLUGIN_CLASS_WITH_JSON(KCMFirewall, "kcm_firewall.json")
 
 KCMFirewall::KCMFirewall(QObject *parent, const KPluginMetaData &metaData)

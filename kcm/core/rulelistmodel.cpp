@@ -9,6 +9,8 @@
 #include "rulelistmodel.h"
 #include <klocalizedstring.h>
 
+#include <Sonic/Logging/Log>
+
 RuleListModel::RuleListModel(QObject *parent)
     : QAbstractTableModel(parent)
 {
@@ -70,7 +72,7 @@ QVariant RuleListModel::data(const QModelIndex &index, int role) const
 
 void RuleListModel::setProfile(const Profile &profile)
 {
-    qDebug() << "Profile on the model received. enabled? " << profile.enabled();
+    sonicDebug() << "Profile on the model received. enabled? " << profile.enabled();
 
     beginResetModel();
     m_profile = profile;

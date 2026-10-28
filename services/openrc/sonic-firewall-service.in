@@ -1,0 +1,14 @@
+#!/sbin/openrc-run
+# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-FileCopyrightText: 2026 Joseph Crowell <joseph.w.crowell@gmail.com>
+
+description="SonicDE firewall service"
+supervisor=supervise-daemon
+command="@KDE_INSTALL_FULL_LIBEXECDIR@/sonic-firewall-service"
+pidfile="/run/sonic-firewall-service.pid"
+# No output_log: the daemon writes /var/log/sonic/sonic-firewall-service.log itself.
+
+depend() {
+    need dbus
+    use logger
+}

@@ -233,6 +233,20 @@ KCMUtils.ScrollViewKCM {
             Layout.fillWidth: true
             type: Kirigami.MessageType.Error
         }
+        Kirigami.InlineMessage {
+            id: firewallInlineNotice
+            Layout.fillWidth: true
+            type: Kirigami.MessageType.Warning
+            showCloseButton: true
+
+            Connections {
+                target: kcm.client
+                function onShowNotice(message) {
+                    firewallInlineNotice.text = message;
+                    firewallInlineNotice.visible = true;
+                }
+            }
+        }
         Kirigami.FormLayout {
             RowLayout {
                 spacing: Kirigami.Units.smallSpacing

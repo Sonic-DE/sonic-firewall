@@ -9,12 +9,12 @@
 #include "ufwclient.h"
 #include "ufwlogmodel.h"
 
+#include <initsystem.h>
 #include <rule.h>
-#include <systemdjob.h>
 #include <types.h>
 
-#include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QNetworkInterface>
 #include <QProcess>
 #include <QRegularExpression>
@@ -32,32 +32,57 @@
 #include <loglistmodel.h>
 #include <rulelistmodel.h>
 
+#include <Sonic/Logging/Logging>
+
+SONIC_LOGGING_COMPONENT("org.sonicde.firewall.ufw")
+SONIC_LOGGING_AUTO_INSTALL()
+
 K_PLUGIN_CLASS_WITH_JSON(UfwClient, "ufwbackend.json")
-Q_LOGGING_CATEGORY(UFWClientDebug, "ufw.client")
 
 namespace
 {
+// ENABLED=yes in ufw.conf; a file read, so it never starts a process on the GUI thread.
+bool ufwConfigEnabled()
+{
+    QFile file(QStringLiteral("/etc/ufw/ufw.conf"));
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return false;
+    }
+    while (!file.atEnd()) {
+        const QString line = QString::fromUtf8(file.readLine()).trimmed();
+        if (line.isEmpty() || line.startsWith(u'#') || !line.startsWith(QLatin1String("ENABLED="))) {
+            continue;
+        }
+        QString value = line.mid(line.indexOf(u'=') + 1);
+        if (value.size() >= 2 && (value.front() == u'"' || value.front() == u'\'') && value.back() == value.front()) {
+            value = value.mid(1, value.size() - 2);
+        }
+        return value.compare(QLatin1String("yes"), Qt::CaseInsensitive) == 0;
+    }
+    return false;
+}
+
 void debugState(KAuth::Action::AuthStatus status)
 {
     using Status = KAuth::Action::AuthStatus;
     switch (status) {
     case Status::AuthorizedStatus:
-        qCDebug(UFWClientDebug) << "Job Authorized";
+        sonicDebug() << "Job Authorized";
         break;
     case Status::AuthRequiredStatus:
-        qCDebug(UFWClientDebug) << "Job Requires authentication";
+        sonicDebug() << "Job Requires authentication";
         break;
     case Status::UserCancelledStatus:
-        qCDebug(UFWClientDebug) << "User cancelled!";
+        sonicDebug() << "User cancelled!";
         break;
     case Status::DeniedStatus:
-        qCDebug(UFWClientDebug) << "Password denied";
+        sonicDebug() << "Password denied";
         break;
     case Status::InvalidStatus:
-        qCDebug(UFWClientDebug) << "Invalid Status!";
+        sonicDebug() << "Invalid Status!";
         break;
     case Status::ErrorStatus:
-        qCDebug(UFWClientDebug) << "Job is in an error state";
+        sonicDebug() << "Job is in an error state";
         break;
     }
 }
@@ -85,18 +110,6 @@ void UfwClient::refresh()
 {
     queryStatus(FirewallClient::DefaultDataBehavior::ReadDefaults, FirewallClient::ProfilesBehavior::ListenProfiles);
 }
-void UfwClient::enableService(bool value)
-{
-    SystemdJob *job = new SystemdJob(static_cast<SYSTEMD::actions>(value), QStringLiteral("ufw.service"), true);
-
-    connect(job, &SystemdJob::result, this, [job] {
-        if (job->error()) {
-            qCDebug(UFWClientDebug) << "SystemdJob Error: " << job->error() << job->errorString();
-            return;
-        }
-    });
-    job->start();
-}
 bool UfwClient::enabled() const
 {
     return m_currentProfile.enabled();
@@ -114,16 +127,24 @@ KJob *UfwClient::setEnabled(bool value)
     };
 
     KAuth::Action modifyAction = buildModifyAction(args);
-    qCDebug(UFWClientDebug) << "Starting the set Enabled job";
+    // setStatus also sets ufw's boot service: the installed query plus one step, each up to 70 s.
+    modifyAction.setTimeout(240000);
+    sonicDebug() << "Starting the set Enabled job";
     KAuth::ExecuteJob *job = modifyAction.execute();
 
     connect(job, &KAuth::ExecuteJob::result, this, [this, job, value] {
-        qCDebug(UFWClientDebug) << "Set Enabled job finished, triggering a status query.";
+        sonicDebug() << "Set Enabled job finished, triggering a status query.";
         if (job->error() == KJob::NoError) {
-            enableService(value);
+            // The boot step isn't fatal: the rules are applied and ENABLED is written either way.
+            const QString bootWarning = job->data().value(QStringLiteral("bootWarning")).toString();
+            if (!bootWarning.isEmpty()) {
+                sonicWarning() << "ufw is" << (value ? "on" : "off") << "but its boot service step failed:" << bootWarning;
+                Q_EMIT showNotice(value ? i18n("The firewall is on, but it could not be set to start automatically: %1", bootWarning)
+                                        : i18n("The firewall is off, but it could not be removed from startup: %1", bootWarning));
+            }
             queryStatus(FirewallClient::DefaultDataBehavior::ReadDefaults, FirewallClient::ProfilesBehavior::DontListenProfiles);
         } else {
-            qCDebug(UFWClientDebug) << "Job error: " << job->error();
+            sonicDebug() << "Job error: " << job->error();
         }
     });
 
@@ -132,9 +153,9 @@ KJob *UfwClient::setEnabled(bool value)
 
 KJob *UfwClient::queryStatus(FirewallClient::DefaultDataBehavior defaultsBehavior, FirewallClient::ProfilesBehavior profilesBehavior)
 {
-    qCDebug(UFWClientDebug) << "Status query starting";
+    sonicDebug() << "Status query starting";
     if (m_busy) {
-        qWarning() << "Ufw client is busy";
+        sonicWarning() << "Ufw client is busy";
         return nullptr;
     }
 
@@ -154,19 +175,19 @@ KJob *UfwClient::queryStatus(FirewallClient::DefaultDataBehavior defaultsBehavio
 
     KAuth::ExecuteJob *job = m_queryAction.execute();
     connect(job, &KAuth::ExecuteJob::result, this, [this, job] {
-        qCDebug(UFWClientDebug) << "Status Query finished, setting the profile";
+        sonicDebug() << "Status Query finished, setting the profile";
         m_busy = false;
 
         if (job->error() != KJob::NoError) {
             Q_EMIT showErrorMessage(i18n("There was an error in the backend! Please report it.\n%1 %2", job->action().name(), job->errorString()));
-            qWarning() << job->action().name() << job->errorString();
+            sonicWarning() << job->action().name() << job->errorString();
             return;
         }
         QByteArray response = job->data().value("response", "").toByteArray();
         setProfile(Profile(response));
     });
 
-    qCDebug(UFWClientDebug) << "Starting the Status Query";
+    sonicDebug() << "Starting the Status Query";
     job->start();
     return job;
 }
@@ -245,7 +266,7 @@ void UfwClient::refreshLogs()
 {
     if (!m_logs) {
         logs();
-        qWarning() << "Trying to refresh logs without logs model, creating the object.";
+        sonicWarning() << "Trying to refresh logs without logs model, creating the object.";
         return;
     }
 
@@ -280,7 +301,7 @@ void UfwClient::refreshLogs()
 
 void UfwClient::setProfile(Profile profile)
 {
-    qCDebug(UFWClientDebug) << "Profile Received, Setting the profile on the model";
+    sonicDebug() << "Profile Received, Setting the profile on the model";
     auto oldProfile = m_currentProfile;
     m_currentProfile = profile;
     m_rulesModel->setProfile(m_currentProfile);
@@ -338,7 +359,7 @@ Rule *UfwClient::ruleAt(int index)
 KJob *UfwClient::addRule(Rule *r)
 {
     if (!r) {
-        qWarning() << "nullptr rule";
+        sonicWarning() << "nullptr rule";
         return nullptr;
     }
 
@@ -364,7 +385,7 @@ KJob *UfwClient::addRule(Rule *r)
 KJob *UfwClient::removeRule(int index)
 {
     if (index < 0 || index >= m_currentProfile.rules().count()) {
-        qWarning() << __FUNCTION__ << "invalid rule index";
+        sonicWarning() << __FUNCTION__ << "invalid rule index";
         return nullptr;
     }
 
@@ -403,7 +424,7 @@ KJob *UfwClient::moveRule(int from, int to)
 {
     const QList<Rule *> cRules = m_currentProfile.rules();
     if (from < 0 || from >= cRules.count()) {
-        qWarning() << "invalid from index";
+        sonicWarning() << "invalid from index";
         return nullptr;
     }
 
@@ -469,7 +490,7 @@ QString portStrToInt(const QString &portStr)
 {
     QFile file("/etc/services");
     if (!file.open(QIODevice::ReadOnly)) {
-        qCDebug(UFWClientDebug) << "Could not open file, returning";
+        sonicDebug() << "Could not open file, returning";
         return portStr;
     }
     while (!file.atEnd()) {
@@ -517,9 +538,9 @@ Rule *UfwClient::createRuleFromConnection(const QString &protocol, const QString
     rule->setIncoming(status == QStringLiteral("LISTEN"));
     rule->setPolicy("deny");
 
-    qCDebug(UFWClientDebug) << "-----------------------";
-    qCDebug(UFWClientDebug) << foreignAddresData << localAddressData;
-    qCDebug(UFWClientDebug) << "------------------------";
+    sonicDebug() << "-----------------------";
+    sonicDebug() << foreignAddresData << localAddressData;
+    sonicDebug() << "------------------------";
 
     // Prepare rule draft
     if (status == QStringLiteral("LISTEN")) {
@@ -617,7 +638,7 @@ QString UfwClient::toXml(Rule *r) const
     xml.writeStartElement(QStringLiteral("rule"));
 
     if (r->position() != 0) {
-        qCDebug(UFWClientDebug) << "Getting the position" << r->position();
+        sonicDebug() << "Getting the position" << r->position();
         xml.writeAttribute(QStringLiteral("position"), QString::number(r->position()));
     }
 
@@ -667,17 +688,16 @@ QString UfwClient::toXml(Rule *r) const
 
 bool UfwClient::isCurrentlyLoaded() const
 {
-    QProcess process;
-    const QString pname = "systemctl";
-    const QStringList args = {"status", "ufw"};
-
-    process.start(pname, args);
-    process.waitForFinished();
-
-    // systemctl returns 0 for status if the app is loaded, and 3 otherwise.
-    qCDebug(UFWClientDebug) << "Ufw is loaded?" << (process.exitCode() == EXIT_SUCCESS);
-
-    return process.exitCode() == EXIT_SUCCESS;
+    // The config check is a file read; the service check can start a process on the GUI thread.
+    // ENABLED=yes counts as loaded: enabling with serviceOnly only registers ufw for boot, and ufw applies its
+    // rules whatever the init state.
+    if (ufwConfigEnabled()) {
+        sonicDebug() << "Ufw is loaded? ENABLED=yes";
+        return true;
+    }
+    const bool serviceActive = InitSystem::isServiceActive(QStringLiteral("ufw"));
+    sonicDebug() << "Ufw is loaded? ENABLED is not yes; service active:" << serviceActive;
+    return serviceActive;
 }
 
 bool UfwClient::supportsRuleUpdate() const
@@ -715,9 +735,9 @@ void UfwClient::queryKnownApplications()
     connect(job, &KAuth::ExecuteJob::result, this, [this, job] {
         if (job->error() == KJob::NoError) {
             m_knownApplications = job->data()["response"].toStringList();
-            qCDebug(UFWClientDebug) << "Setting the known applications to" << m_knownApplications;
+            sonicDebug() << "Setting the known applications to" << m_knownApplications;
         } else {
-            qCDebug(UFWClientDebug) << "Job error: " << job->error();
+            sonicDebug() << "Job error: " << job->error();
         }
     });
     job->start();

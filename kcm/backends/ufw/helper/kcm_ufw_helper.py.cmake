@@ -1,4 +1,4 @@
-#!@Python3_EXECUTABLE@
+#!@UFW_PYTHON_EXECUTABLE@
 
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2010  Darwin M. Bautista <djclue917@gmail.com>

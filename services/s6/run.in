@@ -1,0 +1,8 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-FileCopyrightText: 2026 Joseph Crowell <joseph.w.crowell@gmail.com>
+
+# s6-rc orders this after dbus through dependencies.d.
+# Not captured: the daemon writes /var/log/sonic/sonic-firewall-service.log itself.
+exec >/dev/null 2>&1
+exec @KDE_INSTALL_FULL_LIBEXECDIR@/sonic-firewall-service

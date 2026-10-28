@@ -6,7 +6,6 @@
 
 #include <chrono>
 
-#include <QDebug>
 #include <QMetaEnum>
 
 #include <KLocalizedString>

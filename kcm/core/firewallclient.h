@@ -14,10 +14,6 @@
 #include <QObject>
 #include <QTimer>
 
-#include <QLoggingCategory>
-
-Q_DECLARE_LOGGING_CATEGORY(FirewallClientDebug)
-
 class KJob;
 class RuleListModel;
 class LogListModel;
@@ -123,6 +119,11 @@ Q_SIGNALS:
      * This is typically shown as an inline message, e.g. "Failed to create action: Not authorized."
      */
     void showErrorMessage(const QString &message);
+    /**
+     * Emitted when a warning should be displayed that didn't stop the operation,
+     * e.g. "The firewall is on, but it could not be set to start automatically".
+     */
+    void showNotice(const QString &message);
 
 private:
     void setLogsAutoRefresh(bool logsAutoRefresh);

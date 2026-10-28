@@ -7,7 +7,6 @@
 #ifndef FIREWALLDCLIENT_H
 #define FIREWALLDCLIENT_H
 
-#include <QLoggingCategory>
 #include <QString>
 #include <QTimer>
 
@@ -17,8 +16,6 @@
 class RuleListModel;
 class LogListModel;
 struct firewalld_reply;
-
-Q_DECLARE_LOGGING_CATEGORY(FirewallDClientDebug)
 
 class Q_DECL_EXPORT FirewalldClient : public IFirewallClientBackend
 {

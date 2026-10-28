@@ -5,13 +5,10 @@
 #ifndef NETSTATCLIENT_H
 #define NETSTATCLIENT_H
 
-#include <QLoggingCategory>
 #include <QObject>
 
 #include "connectionsmodel.h"
 #include "netstathelper.h"
-
-Q_DECLARE_LOGGING_CATEGORY(NetstatClientDebug)
 
 class NetstatClient : public QObject
 {

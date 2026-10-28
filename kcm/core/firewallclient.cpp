@@ -22,7 +22,7 @@
 #include <QStringList>
 #include <QtGlobal>
 
-Q_LOGGING_CATEGORY(FirewallClientDebug, "firewall.client")
+#include <Sonic/Logging/Log>
 
 IFirewallClientBackend *FirewallClient::m_currentBackend = nullptr;
 
@@ -343,7 +343,7 @@ void FirewallClient::setBackend(const QStringList &backendList)
     }
 
     if (!m_currentBackend) {
-        qCDebug(FirewallClientDebug) << "Could not find any of the specified backends" << backendList;
+        sonicDebug() << "Could not find any of the specified backends" << backendList;
         return;
     }
 
@@ -353,6 +353,7 @@ void FirewallClient::setBackend(const QStringList &backendList)
     connect(m_currentBackend, &IFirewallClientBackend::logsAutoRefreshChanged, this, &FirewallClient::logsAutoRefreshChanged);
     connect(m_currentBackend, &IFirewallClientBackend::hasExecutableChanged, this, &FirewallClient::hasExecutableChanged);
     connect(m_currentBackend, &IFirewallClientBackend::showErrorMessage, this, &FirewallClient::showErrorMessage);
+    connect(m_currentBackend, &IFirewallClientBackend::showNotice, this, &FirewallClient::showNotice);
 }
 
 QString FirewallClient::backend() const

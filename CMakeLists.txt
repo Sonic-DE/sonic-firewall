@@ -64,11 +64,65 @@ find_package(KF6 ${KF6_MIN_VERSION} REQUIRED COMPONENTS
     Auth
 )
 
+find_package(SonicInitInfo ${KF6_MIN_VERSION} REQUIRED)
+find_package(SonicLogging ${KF6_MIN_VERSION} REQUIRED)
+find_package(SonicIpc ${KF6_MIN_VERSION} REQUIRED)
+
+# Init systems whose service files services/CMakeLists.txt installs for sonic-firewall-service.
+# MANUAL_INITS=ON skips detection: nothing is installed unless chosen with -D<INIT>_FOUND=ON.
+option(MANUAL_INITS "Disable init-system detection and service installation" OFF)
+find_package(PkgConfig)
+if(NOT MANUAL_INITS)
+    pkg_check_modules(SYSTEMD "systemd")
+
+    find_program(OPENRC_OPENRC_EXECUTABLE NAMES openrc)
+    find_program(OPENRC_RC_EXECUTABLE NAMES rc)
+    if(OPENRC_OPENRC_EXECUTABLE OR OPENRC_RC_EXECUTABLE)
+        set(OPENRC_FOUND TRUE)
+    else()
+        set(OPENRC_FOUND FALSE)
+    endif()
+
+    find_program(RUNIT_RUNSVDIR_EXECUTABLE NAMES runsvdir)
+    if(RUNIT_RUNSVDIR_EXECUTABLE)
+        set(RUNIT_FOUND TRUE)
+    else()
+        set(RUNIT_FOUND FALSE)
+    endif()
+
+    find_program(DINIT_DAEMON_EXECUTABLE NAMES dinit)
+    if(DINIT_DAEMON_EXECUTABLE)
+        set(DINIT_FOUND TRUE)
+    else()
+        set(DINIT_FOUND FALSE)
+    endif()
+
+    find_program(S6_SVSCAN_EXECUTABLE NAMES s6-svscan)
+    if(S6_SVSCAN_EXECUTABLE)
+        set(S6_FOUND TRUE)
+    else()
+        set(S6_FOUND FALSE)
+    endif()
+
+    # OpenRC systems often run sysvinit as PID 1 only to start OpenRC; their services are OpenRC's.
+    if(EXISTS "/etc/inittab" AND NOT OPENRC_FOUND)
+        find_program(SYSVINIT_TELINIT_EXECUTABLE NAMES telinit)
+        if(SYSVINIT_TELINIT_EXECUTABLE)
+            set(SYSVINIT_FOUND TRUE)
+        else()
+            set(SYSVINIT_FOUND FALSE)
+        endif()
+    else()
+        set(SYSVINIT_FOUND FALSE)
+    endif()
+endif()
+
 
 #-----------------------------------------------------------------------------
 #                               SOURCES
 #-----------------------------------------------------------------------------
 add_subdirectory(kcm)
+add_subdirectory(services)
 
 if (BUILD_TESTING)
     add_subdirectory(autotests)
@@ -82,6 +136,11 @@ include(KDEClangFormat)
 file(GLOB_RECURSE ALL_CLANG_FORMAT_SOURCE_FILES *.cpp *.h)
 list(FILTER ALL_CLANG_FORMAT_SOURCE_FILES EXCLUDE REGEX ".*\\.ccls-cache/.*")
 kde_clang_format(${ALL_CLANG_FORMAT_SOURCE_FILES})
+
+# With SPLIT_BUILD, each init system's service files are a separate CPack component.
+include(CPack)
+set(CPACK_COMPONENTS_GROUPING ONE_PER_GROUP)
+set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)
 
 install(FILES org.kde.plasma.firewall.metainfo.xml DESTINATION ${KDE_INSTALL_METAINFODIR})
 
