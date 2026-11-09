@@ -2,7 +2,7 @@
 
 Sonic Firewall lets you turn your computer's firewall on or off and manage its rules from SonicDE's settings.
 
-## Unreleased
+## 6.8.2 (2026-11-10)
 
 - The firewall settings now work on systems without systemd: OpenRC, runit, s6, dinit, sysvinit and BSD rc.
 - The firewall log view now works without the systemd journal, and shows source ports and times correctly.
